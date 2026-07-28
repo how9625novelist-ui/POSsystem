@@ -90,7 +90,7 @@
       <div class="menu-section">
         <div style="display: flex; justify-content: space-between; align-items: center;">
           <h3>メニュー選択</h3>
-          <button class="action-btn" style="padding: 4px 8px; font-size: 0.8em;" onclick="fetchMenuFromGAS()">🔄 メニュー同期</button>
+          <button class="action-btn" style="padding: 4px 8px; font-size: 0.8em;" onclick="fetchMenuFromGAS()">🔄 再読み込み</button>
         </div>
         <div class="menu-grid" id="menu-grid">読み込み中...</div>
       </div>
@@ -236,25 +236,34 @@
       renderSettings();
     }
 
-    // スプレッドシートから最新メニューを取得（同期）
+    // タイムアウト機能付きの安全なメニュー取得処理
     async function fetchMenuFromGAS() {
-      if (!gasUrl) return;
+      if (!gasUrl) {
+        renderMenu();
+        return;
+      }
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4000); // 4秒でタイムアウト
+
       try {
-        const res = await fetch(gasUrl);
+        const res = await fetch(gasUrl, { signal: controller.signal });
+        clearTimeout(timeoutId);
+
         const data = await res.json();
         if (Array.isArray(data) && data.length > 0) {
           menu = data;
           safeSet('pos_menu_v4', menu);
-          renderMenu();
-          renderSettings();
         }
       } catch (err) {
-        console.log("メニュー同期エラー（ローカルメニューを使用）", err);
+        console.log("同期失敗のためローカルメニューを表示します", err);
+      } finally {
+        // 成功・失敗にかかわらず必ずメニューを描画する
         renderMenu();
+        renderSettings();
       }
     }
 
-    // メニュー更新をスプレッドシートへ書き込み
     async function syncMenuToGAS() {
       if (!gasUrl) return;
       try {
@@ -297,8 +306,8 @@
 
     function renderMenu() {
       const grid = document.getElementById('menu-grid');
-      if (menu.length === 0) {
-        grid.innerHTML = 'メニューがありません';
+      if (!menu || menu.length === 0) {
+        grid.innerHTML = '<p style="grid-column: 1/-1; text-align: center; color: #888;">メニューが登録されていません</p>';
         return;
       }
       grid.innerHTML = menu.map(item => `
@@ -500,7 +509,6 @@
       renderMenu();
       renderSettings();
 
-      // スプレッドシートへ同期
       await syncMenuToGAS();
       alert('新規メニューを追加し、全端末へ同期しました！');
     }
@@ -512,7 +520,6 @@
       renderMenu();
       renderSettings();
 
-      // スプレッドシートへ同期
       await syncMenuToGAS();
       alert('メニューを削除し、全端末へ同期しました！');
     }
