@@ -67,6 +67,7 @@
     th { background: var(--primary); color: var(--white); }
     .form-group { background: var(--white); padding: 15px; border-radius: 8px; margin-bottom: 15px; }
     .form-group input { padding: 8px; margin-right: 8px; margin-bottom: 8px; border: 1px solid #ccc; border-radius: 4px; width: calc(50% - 12px); }
+    
     .action-btn { padding: 10px 15px; background: var(--primary); color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
     .action-btn.danger { background: var(--danger); }
     
@@ -87,8 +88,11 @@
   <div id="tab-pos" class="tab-content active">
     <div class="pos-container">
       <div class="menu-section">
-        <h3>メニュー選択</h3>
-        <div class="menu-grid" id="menu-grid"></div>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h3>メニュー選択</h3>
+          <button class="action-btn" style="padding: 4px 8px; font-size: 0.8em;" onclick="fetchMenuFromGAS()">🔄 メニュー同期</button>
+        </div>
+        <div class="menu-grid" id="menu-grid">読み込み中...</div>
       </div>
       
       <div class="cart-section">
@@ -130,17 +134,16 @@
   <div id="tab-history" class="tab-content">
     <div class="form-group">
       <h3>本日の売上・粗利集計</h3>
-      <div style="display: flex; gap: 15px; margin-top: 10px; flex-wrap: wrap; margin-bottom: 15px;">
+      <div style="display: flex; gap: 15px; margin-top: 10px; flex-wrap: wrap;">
         <div>売上合計: <strong id="today-total" style="color: var(--primary); font-size: 1.2em;">0</strong> 円</div>
         <div>原価合計: <strong id="today-cost" style="color: #7f8c8d; font-size: 1.2em;">0</strong> 円</div>
         <div>粗利益: <strong id="today-profit" style="color: var(--success); font-size: 1.2em;">0</strong> 円</div>
         <div>平均粗利率: <strong id="today-rate" style="color: var(--accent); font-size: 1.2em;">0</strong> %</div>
       </div>
       
-      <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+      <div style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
         <button class="action-btn" onclick="downloadCSV()">CSVダウンロード</button>
-        <!-- 🔴 ここに履歴全削除ボタンを追加しました -->
-        <button class="action-btn danger" onclick="clearAllHistory()">帳簿の履歴を全削除</button>
+        <button class="action-btn danger" onclick="clearHistory()">🗑️ 帳簿履歴をクリア</button>
       </div>
     </div>
 
@@ -171,11 +174,11 @@
     </div>
 
     <div class="form-group">
-      <h3>🍺 新規メニュー追加</h3>
+      <h3>🍺 新規メニュー追加（全端末に同期されます）</h3>
       <input type="text" id="new-name" placeholder="商品名（例: 生ビール）">
       <input type="number" id="new-price" placeholder="売価（税込）">
       <input type="number" id="new-cost" placeholder="原価（仕入値）">
-      <button class="action-btn" onclick="addMenuItem()">追加</button>
+      <button class="action-btn" onclick="addMenuItem()">追加する</button>
     </div>
 
     <h3>現在のメニュー一覧</h3>
@@ -196,7 +199,6 @@
   </div>
 
   <script>
-    // ユーザー専用の連携URLを最初から組み込み
     const DEFAULT_GAS_URL = "https://script.google.com/macros/s/AKfycbxRXlkX0dwZOlar-Mz8YN07jybkxbIFrw1eNfn35sEm7A-THqoupDWEyGIBpY0lq7aWdQ/exec";
 
     function safeGet(key, def) {
@@ -211,25 +213,60 @@
 
     const defaultMenu = [
       { id: 1, name: '生ビール', price: 500, cost: 160 },
-      { id: 2, name: 'ハイボール(40ml)', price: 400, cost: 34 },
+      { id: 2, name: 'ハイボール', price: 400, cost: 34 },
       { id: 3, name: '枝豆', price: 300, cost: 60 },
       { id: 4, name: '唐揚げ', price: 500, cost: 150 }
     ];
 
-    let menu = safeGet('pos_menu_v3', defaultMenu);
+    let menu = safeGet('pos_menu_v4', defaultMenu);
     let history = safeGet('pos_history_v3', []);
     let gasUrl = safeGet('pos_gas_url_v3', DEFAULT_GAS_URL);
     let cart = [];
 
-    function init() {
+    async function init() {
       if (gasUrl) {
         document.getElementById('gas-url').value = gasUrl;
         updateGasStatus(true);
+        await fetchMenuFromGAS();
+      } else {
+        renderMenu();
       }
-      renderMenu();
       renderCart();
       renderHistory();
       renderSettings();
+    }
+
+    // スプレッドシートから最新メニューを取得（同期）
+    async function fetchMenuFromGAS() {
+      if (!gasUrl) return;
+      try {
+        const res = await fetch(gasUrl);
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          menu = data;
+          safeSet('pos_menu_v4', menu);
+          renderMenu();
+          renderSettings();
+        }
+      } catch (err) {
+        console.log("メニュー同期エラー（ローカルメニューを使用）", err);
+        renderMenu();
+      }
+    }
+
+    // メニュー更新をスプレッドシートへ書き込み
+    async function syncMenuToGAS() {
+      if (!gasUrl) return;
+      try {
+        await fetch(gasUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'update_menu', menu: menu })
+        });
+      } catch (err) {
+        console.error("メニュー送信エラー:", err);
+      }
     }
 
     function switchTab(tabName, btn) {
@@ -243,10 +280,10 @@
       const el = document.getElementById('gas-status');
       if (configured) {
         el.className = 'status-badge online';
-        el.textContent = '🟢 Googleスプレッドシート連携中';
+        el.textContent = '🟢 スプレッドシート同期中';
       } else {
         el.className = 'status-badge offline';
-        el.textContent = '⚪ 連携未設定（ローカル保存のみ）';
+        el.textContent = '⚪ 連携未設定';
       }
     }
 
@@ -254,22 +291,16 @@
       gasUrl = document.getElementById('gas-url').value.trim();
       safeSet('pos_gas_url_v3', gasUrl);
       updateGasStatus(!!gasUrl);
+      fetchMenuFromGAS();
       alert('連携URLを保存しました！');
-    }
-
-    // 🔴 帳簿の全削除関数を追加
-    function clearAllHistory() {
-      const confirmed = confirm("これまでの会計履歴をすべて削除してリセットしますか？\n\n※スマホ画面上のデータは消去されますが、Googleスプレッドシート側のデータは消えません。");
-      if (!confirmed) return;
-
-      history = [];
-      safeSet('pos_history_v3', history);
-      renderHistory();
-      alert("帳簿の履歴をすべて削除しました。");
     }
 
     function renderMenu() {
       const grid = document.getElementById('menu-grid');
+      if (menu.length === 0) {
+        grid.innerHTML = 'メニューがありません';
+        return;
+      }
       grid.innerHTML = menu.map(item => `
         <div class="menu-btn" onclick="addToCart(${item.id})">
           ${item.name}
@@ -351,6 +382,7 @@
       
       const now = new Date();
       const record = {
+        type: 'checkout',
         date: now.toLocaleString('ja-JP'),
         dateISO: now.toISOString().split('T')[0],
         totalSales: totalSales,
@@ -413,6 +445,14 @@
       document.getElementById('today-rate').textContent = avgRate;
     }
 
+    function clearHistory() {
+      if (!confirm('これまでの会計履歴をすべて削除しますか？\n※この操作は取り消せません。')) return;
+      history = [];
+      safeSet('pos_history_v3', history);
+      renderHistory();
+      alert('アプリ内の帳簿データを全削除しました！');
+    }
+
     function downloadCSV() {
       if (history.length === 0) return alert('売上データがありません');
       let csvStr = "日時,売上金額,原価合計,粗利益,粗利率(%),内訳\n";
@@ -443,15 +483,15 @@
       }).join('');
     }
 
-    function addMenuItem() {
+    async function addMenuItem() {
       const name = document.getElementById('new-name').value.trim();
       const price = Number(document.getElementById('new-price').value);
       const cost = Number(document.getElementById('new-cost').value) || 0;
 
-      if (!name || price <= 0) return alert('商品名と正価格を入力してください');
+      if (!name || price <= 0) return alert('商品名と正しい売価を入力してください');
 
       menu.push({ id: Date.now(), name, price, cost });
-      safeSet('pos_menu_v3', menu);
+      safeSet('pos_menu_v4', menu);
       
       document.getElementById('new-name').value = '';
       document.getElementById('new-price').value = '';
@@ -459,14 +499,22 @@
       
       renderMenu();
       renderSettings();
+
+      // スプレッドシートへ同期
+      await syncMenuToGAS();
+      alert('新規メニューを追加し、全端末へ同期しました！');
     }
 
-    function deleteMenuItem(id) {
+    async function deleteMenuItem(id) {
       if (!confirm('削除しますか？')) return;
       menu = menu.filter(m => m.id !== id);
-      safeSet('pos_menu_v3', menu);
+      safeSet('pos_menu_v4', menu);
       renderMenu();
       renderSettings();
+
+      // スプレッドシートへ同期
+      await syncMenuToGAS();
+      alert('メニューを削除し、全端末へ同期しました！');
     }
 
     window.onload = init;
