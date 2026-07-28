@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ちょい飲みPOSレジ</title>
+  <style>
+    :root {
+      --primary: #2c3e50;
+      --accent: #e67e22;
+      --success: #27ae60;
+      --danger: #c0392b;
+      --bg: #f4f6f7;
+      --white: #ffffff;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background-color: var(--bg); color: #333; padding: 10px; max-width: 900px; margin: 0 auto; }
+    
+    nav { display: flex; gap: 8px; margin-bottom: 15px; }
+    nav button {
+      flex: 1; padding: 12px 5px; border: none; background: #ddd;
+      font-size: 15px; font-weight: bold; border-radius: 6px; cursor: pointer;
+    }
+    nav button.active { background: var(--primary); color: var(--white); }
+
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    .pos-container { display: flex; flex-wrap: wrap; gap: 15px; }
+    .menu-section { flex: 1 1 320px; }
+    .cart-section { flex: 1 1 300px; background: var(--white); padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+
+    .menu-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 10px; margin-top: 10px; }
+    .menu-btn {
+      background: var(--white); border: 2px solid var(--primary); border-radius: 8px;
+      padding: 12px 5px; text-align: center; cursor: pointer; font-weight: bold;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.05); user-select: none;
+    }
+    .menu-btn:active { transform: scale(0.95); background: #eef2f5; }
+    .menu-btn .price { color: var(--accent); font-size: 0.9em; display: block; margin-top: 4px; }
+    .menu-btn .cost { color: #7f8c8d; font-size: 0.75em; display: block; font-weight: normal; }
+
+    .cart-list { list-style: none; max-height: 200px; overflow-y: auto; margin-bottom: 12px; border-bottom: 2px solid #eee; }
+    .cart-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #eee; }
+    .cart-item .qty-btn { width: 32px; height: 32px; border: 1px solid #ccc; background: #f8f9fa; border-radius: 4px; font-weight: bold; font-size: 16px; cursor: pointer; }
+    
+    .summary-box { background: #fef5ec; padding: 12px; border-radius: 6px; margin-bottom: 12px; border: 1px solid #fadbd8; }
+    .summary-row { display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 0.95em; }
+    .summary-row.total { font-size: 1.3em; font-weight: bold; color: var(--primary); border-top: 1px solid #e0e0e0; padding-top: 6px; margin-top: 6px; }
+    .summary-row.profit { font-weight: bold; color: var(--success); }
+    
+    .pay-input { width: 100%; padding: 10px; font-size: 1.1em; margin-top: 4px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px; text-align: right; }
+    .change-box { font-size: 1.2em; font-weight: bold; text-align: right; color: var(--danger); margin-bottom: 12px; }
+    
+    .checkout-btn {
+      width: 100%; padding: 15px; background: var(--accent); color: var(--white);
+      border: none; border-radius: 6px; font-size: 1.2em; font-weight: bold; cursor: pointer;
+    }
+    .checkout-btn:disabled { background: #ccc; cursor: not-allowed; }
+
+    .status-badge { font-size: 0.85em; padding: 4px 8px; border-radius: 4px; display: inline-block; margin-bottom: 10px; }
+    .status-badge.online { background: #e8f8f5; color: var(--success); border: 1px solid #a3e4d7; }
+    .status-badge.offline { background: #fef9e7; color: #f39c12; border: 1px solid #fdebd0; }
+
+    table { width: 100%; border-collapse: collapse; background: var(--white); margin-top: 10px; font-size: 0.9em; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    th { background: var(--primary); color: var(--white); }
+    .form-group { background: var(--white); padding: 15px; border-radius: 8px; margin-bottom: 15px; }
+    .form-group input { padding: 8px; margin-right: 8px; margin-bottom: 8px; border: 1px solid #ccc; border-radius: 4px; width: calc(50% - 12px); }
+    .action-btn { padding: 10px 15px; background: var(--primary); color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+    .action-btn.danger { background: var(--danger); }
+    
+    @media (max-width: 480px) {
+      .form-group input { width: 100%; margin-right: 0; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <button class="active" onclick="switchTab('pos', this)">レジ会計</button>
+    <button onclick="switchTab('history', this)">売上・粗利帳簿</button>
+    <button onclick="switchTab('settings', this)">設定・メニュー</button>
+  </nav>
+
+  <!-- レジ会計画面 -->
+  <div id="tab-pos" class="tab-content active">
+    <div class="pos-container">
+      <div class="menu-section">
+        <h3>メニュー選択</h3>
+        <div class="menu-grid" id="menu-grid"></div>
+      </div>
+      
+      <div class="cart-section">
+        <h3>伝票・会計</h3>
+        <div id="gas-status" class="status-badge offline">連携未設定（ローカル保存のみ）</div>
+        
+        <ul class="cart-list" id="cart-list"></ul>
+        
+        <div class="summary-box">
+          <div class="summary-row">
+            <span>原価合計:</span>
+            <span>¥<span id="total-cost">0</span></span>
+          </div>
+          <div class="summary-row profit">
+            <span>粗利益 (粗利率):</span>
+            <span>¥<span id="total-profit">0</span> (<span id="profit-rate">0</span>%)</span>
+          </div>
+          <div class="summary-row total">
+            <span>売上合計 (税込):</span>
+            <span>¥<span id="total-price">0</span></span>
+          </div>
+        </div>
+
+        <div>
+          <label>お預かり金額:</label>
+          <input type="number" id="pay-amount" class="pay-input" placeholder="0" oninput="calculateChange()">
+        </div>
+
+        <div class="change-box">
+          お釣り: ¥<span id="change-price">0</span>
+        </div>
+
+        <button class="checkout-btn" id="checkout-btn" onclick="processCheckout()" disabled>会計を確定する</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 売上帳簿画面 -->
+  <div id="tab-history" class="tab-content">
+    <div class="form-group">
+      <h3>本日の売上・粗利集計</h3>
+      <div style="display: flex; gap: 15px; margin-top: 10px; flex-wrap: wrap; margin-bottom: 15px;">
+        <div>売上合計: <strong id="today-total" style="color: var(--primary); font-size: 1.2em;">0</strong> 円</div>
+        <div>原価合計: <strong id="today-cost" style="color: #7f8c8d; font-size: 1.2em;">0</strong> 円</div>
+        <div>粗利益: <strong id="today-profit" style="color: var(--success); font-size: 1.2em;">0</strong> 円</div>
+        <div>平均粗利率: <strong id="today-rate" style="color: var(--accent); font-size: 1.2em;">0</strong> %</div>
+      </div>
+      
+      <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+        <button class="action-btn" onclick="downloadCSV()">CSVダウンロード</button>
+        <!-- 🔴 ここに履歴全削除ボタンを追加しました -->
+        <button class="action-btn danger" onclick="clearAllHistory()">帳簿の履歴を全削除</button>
+      </div>
+    </div>
+
+    <h3>会計履歴（直近100件）</h3>
+    <div style="overflow-x: auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>日時</th>
+            <th>売上</th>
+            <th>原価</th>
+            <th>粗利</th>
+            <th>粗利率</th>
+            <th>内訳</th>
+          </tr>
+        </thead>
+        <tbody id="history-table"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 設定画面 -->
+  <div id="tab-settings" class="tab-content">
+    <div class="form-group">
+      <h3>📊 Googleスプレッドシート連携設定</h3>
+      <input type="url" id="gas-url" placeholder="https://script.google.com/macros/s/.../exec" style="width: 100%; margin-bottom: 10px;">
+      <button class="action-btn" onclick="saveGasUrl()">URLを保存する</button>
+    </div>
+
+    <div class="form-group">
+      <h3>🍺 新規メニュー追加</h3>
+      <input type="text" id="new-name" placeholder="商品名（例: 生ビール）">
+      <input type="number" id="new-price" placeholder="売価（税込）">
+      <input type="number" id="new-cost" placeholder="原価（仕入値）">
+      <button class="action-btn" onclick="addMenuItem()">追加</button>
+    </div>
+
+    <h3>現在のメニュー一覧</h3>
+    <div style="overflow-x: auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>商品名</th>
+            <th>売価</th>
+            <th>原価</th>
+            <th>粗利率</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="menu-table"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    // ユーザー専用の連携URLを最初から組み込み
+    const DEFAULT_GAS_URL = "https://script.google.com/macros/s/AKfycbxRXlkX0dwZOlar-Mz8YN07jybkxbIFrw1eNfn35sEm7A-THqoupDWEyGIBpY0lq7aWdQ/exec";
+
+    function safeGet(key, def) {
+      try {
+        const val = localStorage.getItem(key);
+        return val ? JSON.parse(val) : def;
+      } catch(e) { return def; }
+    }
+    function safeSet(key, val) {
+      try { localStorage.setItem(key, JSON.stringify(val)); } catch(e) {}
+    }
+
+    const defaultMenu = [
+      { id: 1, name: '生ビール', price: 500, cost: 160 },
+      { id: 2, name: 'ハイボール(40ml)', price: 400, cost: 34 },
+      { id: 3, name: '枝豆', price: 300, cost: 60 },
+      { id: 4, name: '唐揚げ', price: 500, cost: 150 }
+    ];
+
+    let menu = safeGet('pos_menu_v3', defaultMenu);
+    let history = safeGet('pos_history_v3', []);
+    let gasUrl = safeGet('pos_gas_url_v3', DEFAULT_GAS_URL);
+    let cart = [];
+
+    function init() {
+      if (gasUrl) {
+        document.getElementById('gas-url').value = gasUrl;
+        updateGasStatus(true);
+      }
+      renderMenu();
+      renderCart();
+      renderHistory();
+      renderSettings();
+    }
+
+    function switchTab(tabName, btn) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('nav button').forEach(el => el.classList.remove('active'));
+      document.getElementById(`tab-${tabName}`).classList.add('active');
+      if (btn) btn.classList.add('active');
+    }
+
+    function updateGasStatus(configured) {
+      const el = document.getElementById('gas-status');
+      if (configured) {
+        el.className = 'status-badge online';
+        el.textContent = '🟢 Googleスプレッドシート連携中';
+      } else {
+        el.className = 'status-badge offline';
+        el.textContent = '⚪ 連携未設定（ローカル保存のみ）';
+      }
+    }
+
+    function saveGasUrl() {
+      gasUrl = document.getElementById('gas-url').value.trim();
+      safeSet('pos_gas_url_v3', gasUrl);
+      updateGasStatus(!!gasUrl);
+      alert('連携URLを保存しました！');
+    }
+
+    // 🔴 帳簿の全削除関数を追加
+    function clearAllHistory() {
+      const confirmed = confirm("これまでの会計履歴をすべて削除してリセットしますか？\n\n※スマホ画面上のデータは消去されますが、Googleスプレッドシート側のデータは消えません。");
+      if (!confirmed) return;
+
+      history = [];
+      safeSet('pos_history_v3', history);
+      renderHistory();
+      alert("帳簿の履歴をすべて削除しました。");
+    }
+
+    function renderMenu() {
+      const grid = document.getElementById('menu-grid');
+      grid.innerHTML = menu.map(item => `
+        <div class="menu-btn" onclick="addToCart(${item.id})">
+          ${item.name}
+          <span class="price">¥${item.price.toLocaleString()}</span>
+          <span class="cost">(原価 ¥${item.cost})</span>
+        </div>
+      `).join('');
+    }
+
+    function addToCart(id) {
+      const item = menu.find(m => m.id === id);
+      const cartItem = cart.find(c => c.id === id);
+      if (cartItem) { cartItem.qty++; } else { cart.push({ ...item, qty: 1 }); }
+      renderCart();
+    }
+
+    function updateQty(id, delta) {
+      const cartItem = cart.find(c => c.id === id);
+      if (cartItem) {
+        cartItem.qty += delta;
+        if (cartItem.qty <= 0) cart = cart.filter(c => c.id !== id);
+      }
+      renderCart();
+    }
+
+    function renderCart() {
+      const list = document.getElementById('cart-list');
+      list.innerHTML = cart.map(item => `
+        <li class="cart-item">
+          <div>
+            <strong>${item.name}</strong><br>
+            <small>売¥${item.price} / 原¥${item.cost} × ${item.qty}</small>
+          </div>
+          <div>
+            <button class="qty-btn" onclick="updateQty(${item.id}, -1)">-</button>
+            <span style="margin: 0 6px; font-weight: bold;">${item.qty}</span>
+            <button class="qty-btn" onclick="updateQty(${item.id}, 1)">+</button>
+          </div>
+        </li>
+      `).join('');
+
+      const totalSales = cart.reduce((sum, i) => sum + (i.price * i.qty), 0);
+      const totalCost = cart.reduce((sum, i) => sum + (i.cost * i.qty), 0);
+      const totalProfit = totalSales - totalCost;
+      const profitRate = totalSales > 0 ? ((totalProfit / totalSales) * 100).toFixed(1) : '0';
+
+      document.getElementById('total-price').textContent = totalSales.toLocaleString();
+      document.getElementById('total-cost').textContent = totalCost.toLocaleString();
+      document.getElementById('total-profit').textContent = totalProfit.toLocaleString();
+      document.getElementById('profit-rate').textContent = profitRate;
+
+      calculateChange();
+    }
+
+    function calculateChange() {
+      const totalSales = cart.reduce((sum, i) => sum + (i.price * i.qty), 0);
+      const pay = Number(document.getElementById('pay-amount').value) || 0;
+      const change = pay - totalSales;
+      const changeEl = document.getElementById('change-price');
+      const checkoutBtn = document.getElementById('checkout-btn');
+
+      if (totalSales > 0 && pay >= totalSales) {
+        changeEl.textContent = change.toLocaleString();
+        changeEl.style.color = "#27ae60";
+        checkoutBtn.disabled = false;
+      } else {
+        changeEl.textContent = change < 0 ? '不足' : '0';
+        changeEl.style.color = "#c0392b";
+        checkoutBtn.disabled = true;
+      }
+    }
+
+    async function processCheckout() {
+      const totalSales = cart.reduce((sum, i) => sum + (i.price * i.qty), 0);
+      const totalCost = cart.reduce((sum, i) => sum + (i.cost * i.qty), 0);
+      const totalProfit = totalSales - totalCost;
+      const profitRate = totalSales > 0 ? ((totalProfit / totalSales) * 100).toFixed(1) : 0;
+      const itemsSummary = cart.map(c => `${c.name}×${c.qty}`).join(', ');
+      
+      const now = new Date();
+      const record = {
+        date: now.toLocaleString('ja-JP'),
+        dateISO: now.toISOString().split('T')[0],
+        totalSales: totalSales,
+        totalCost: totalCost,
+        totalProfit: totalProfit,
+        profitRate: profitRate,
+        details: itemsSummary
+      };
+
+      history.unshift(record);
+      safeSet('pos_history_v3', history);
+
+      if (gasUrl) {
+        try {
+          await fetch(gasUrl, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(record)
+          });
+        } catch (err) {}
+      }
+
+      cart = [];
+      document.getElementById('pay-amount').value = '';
+      renderCart();
+      renderHistory();
+      alert(`会計完了！\n売上: ¥${totalSales.toLocaleString()} / 粗利: ¥${totalProfit.toLocaleString()}`);
+    }
+
+    function renderHistory() {
+      const tbody = document.getElementById('history-table');
+      const todayISO = new Date().toISOString().split('T')[0];
+      
+      let todaySales = 0, todayCost = 0, todayProfit = 0;
+
+      tbody.innerHTML = history.slice(0, 100).map(h => {
+        if (h.dateISO === todayISO) {
+          todaySales += h.totalSales;
+          todayCost += h.totalCost;
+          todayProfit += h.totalProfit;
+        }
+        return `
+          <tr>
+            <td style="font-size:0.8em; color:#555;">${h.date}</td>
+            <td>¥${h.totalSales.toLocaleString()}</td>
+            <td>¥${h.totalCost.toLocaleString()}</td>
+            <td style="color:var(--success); font-weight:bold;">¥${h.totalProfit.toLocaleString()}</td>
+            <td>${h.profitRate}%</td>
+            <td style="font-size:0.85em;">${h.details}</td>
+          </tr>
+        `;
+      }).join('');
+
+      const avgRate = todaySales > 0 ? ((todayProfit / todaySales) * 100).toFixed(1) : '0';
+
+      document.getElementById('today-total').textContent = todaySales.toLocaleString();
+      document.getElementById('today-cost').textContent = todayCost.toLocaleString();
+      document.getElementById('today-profit').textContent = todayProfit.toLocaleString();
+      document.getElementById('today-rate').textContent = avgRate;
+    }
+
+    function downloadCSV() {
+      if (history.length === 0) return alert('売上データがありません');
+      let csvStr = "日時,売上金額,原価合計,粗利益,粗利率(%),内訳\n";
+      history.forEach(h => {
+        csvStr += `"${h.date}",${h.totalSales},${h.totalCost},${h.totalProfit},${h.profitRate},"${h.details}"\n`;
+      });
+
+      const blob = new Blob(["\uFEFF" + csvStr], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `売上粗利帳簿_${new Date().toISOString().split('T')[0]}.csv`;
+      link.click();
+    }
+
+    function renderSettings() {
+      const tbody = document.getElementById('menu-table');
+      tbody.innerHTML = menu.map(m => {
+        const rate = m.price > 0 ? (((m.price - m.cost) / m.price) * 100).toFixed(1) : 0;
+        return `
+          <tr>
+            <td><strong>${m.name}</strong></td>
+            <td>¥${m.price.toLocaleString()}</td>
+            <td>¥${m.cost.toLocaleString()}</td>
+            <td style="color:var(--success); font-weight:bold;">${rate}%</td>
+            <td><button class="action-btn" style="padding:4px 8px; background:#7f8c8d;" onclick="deleteMenuItem(${m.id})">削除</button></td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function addMenuItem() {
+      const name = document.getElementById('new-name').value.trim();
+      const price = Number(document.getElementById('new-price').value);
+      const cost = Number(document.getElementById('new-cost').value) || 0;
+
+      if (!name || price <= 0) return alert('商品名と正価格を入力してください');
+
+      menu.push({ id: Date.now(), name, price, cost });
+      safeSet('pos_menu_v3', menu);
+      
+      document.getElementById('new-name').value = '';
+      document.getElementById('new-price').value = '';
+      document.getElementById('new-cost').value = '';
+      
+      renderMenu();
+      renderSettings();
+    }
+
+    function deleteMenuItem(id) {
+      if (!confirm('削除しますか？')) return;
+      menu = menu.filter(m => m.id !== id);
+      safeSet('pos_menu_v3', menu);
+      renderMenu();
+      renderSettings();
+    }
+
+    window.onload = init;
+  </script>
+</body>
+</html>
